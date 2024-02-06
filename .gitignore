@@ -1,0 +1,4 @@
+detection_native
+*.o
+*.log
+
