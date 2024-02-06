@@ -30,7 +30,3 @@ hailortcli fw-control identify --ip <보드IP>
 ./detection_native <이더넷인터페이스명>
 # 기입된 인터페이스명으로 이더넷 hailo 감지 후 자동으로 init 진행
 ```
-
-## 추후 개선사항 메모
-* zaiv 코드의 쉬운 응용 위해 유저가 수정해야하는 main.cpp 제외 다른 코드들은 다른 폴더로 이동
-* hailo inference 쪽 코드는 독립적인 소스(inference.cpp) 에서 관리해 유저가 수정할 필요 없도록 할 예정
