@@ -15,10 +15,12 @@ sudo make install -j4
 sudo apt-get install libopencv-dev
 ```
 
-#### 이더넷 Hailo 사용시 다음 스크립트 참고
+#### Check
+
+* If you want to check board connecting status of ZAiV-AHU or ZAiV-AHR, please enter as below.
 ```
-hailortcli scan --interface <인터페이스이름>
-hailortcli fw-control identify --ip <보드IP>
+hailortcli scan --interface [ethernet interface name]
+hailortcli fw-control identify --ip [Board IP]
 ```
 # Build
 ```
@@ -26,7 +28,9 @@ make -j4
 ```
 
 # Running
+
+* If you have ZAiV-AHU or ZAiV-AHR, Needs to add argument(ethernet interface name).
+
 ```
-./detection_native <이더넷인터페이스명>
-# 기입된 인터페이스명으로 이더넷 hailo 감지 후 자동으로 init 진행
+./detection_native [ethernet interface name]
 ```
