@@ -109,10 +109,10 @@ int main(int argc, char **argv)
 	else eth_name = ETH_HAILO_INTERFACE_NAME;
 	zaiv_set_eth_name(eth_name);
 
-	// 커스텀 HEF 파일 지정 기능 NMS HEF 사용가능
-	zaiv_set_hef_file(NMS_HEF_FILE);
-	// NMS HEF 파일의 라벨 지정
-	zaiv_set_hef_labels(yolov5_bdd_labels);
+	// // 커스텀 HEF 파일 지정 기능 NMS HEF 사용가능
+	// zaiv_set_hef_file(NMS_HEF_FILE);
+	// // NMS HEF 파일의 라벨 지정
+	// zaiv_set_hef_labels(yolov5_bdd_labels);
 	
 	if(!input_source_get(&video)) return 1;
 	
