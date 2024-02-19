@@ -192,6 +192,55 @@ std::queue<HailoROIPtr> FrameDetections;
 
 bool thread_terminated[OUTPUT_COUNT] = {false,};
 
+std::map<uint8_t, std::string>& labels_dict = common::coco_eighty;
+
+void zaiv_set_hef_labels(std::map<uint8_t, std::string> &labels)
+{
+	labels_dict = labels;
+}
+
+void nms_vstream_read_thread_runner(hailo_output_vstream output_vstream, size_t output_vstream_frame_sizes, hailo_vstream_info_t output_vstream_info)
+{
+	std::cout << "Starting nms_vstream_read_thread_runner\n";
+	
+	std::vector<uint8_t> dummydata(output_vstream_frame_sizes);
+	
+
+	while(!thread_terminate)
+	{
+		hailo_status status = hailo_vstream_read_raw_buffer(output_vstream, dummydata.data(), output_vstream_frame_sizes);
+		
+		if (HAILO_SUCCESS != status) {
+			std::cerr << "Failed reading with status = " << status << std::endl;
+			_terminate = thread_terminate = true;
+			break;
+		}
+
+		try
+		{
+			HailoROIPtr roi = std::make_shared<HailoROI>(HailoROI(HailoBBox(0.0f, 0.0f, 1.0f, 1.0f)));
+			roi->add_tensor(std::make_shared<HailoTensor>(reinterpret_cast<uint8_t*>(dummydata.data()), output_vstream_info));
+			auto post = MobilenetSSDPost(roi->get_tensor(output_vstream_info.name), labels_dict);
+			auto detections = post.decode();
+			hailo_common::add_detections(roi, detections); 
+			FrameDetections.push(roi);
+		}
+		catch (std::runtime_error& e)
+		{
+			std::cerr << e.what() << std::endl;
+			_terminate = thread_terminate = true;
+			break;
+		}
+	
+		fps++;
+		
+	}
+	
+
+	thread_terminated[0] = true;
+	std::cout << "nms_vstream_read_thread_runner Exited\n";
+}
+
 void vstream_read_thread_runner(int index, hailo_output_vstream output_vstream, size_t output_vstream_frame_sizes)
 {
 	std::cout << "Starting vstream_read_thread_runner - index:" << index << "\n";
@@ -261,7 +310,18 @@ void yolo_output_collecter_thread_runner(hailo_vstream_info_t *output_vstream_in
 			roi->add_tensor(std::make_shared<HailoTensor>(reinterpret_cast<uint8_t*>(featuresbuffer_pop[1].data()), output_vstream_info[1]));
 			roi->add_tensor(std::make_shared<HailoTensor>(reinterpret_cast<uint8_t*>(featuresbuffer_pop[0].data()), output_vstream_info[0]));
 
-			yolov5(roi, init_params);
+
+			try
+			{
+				yolov5(roi, init_params);
+			}
+			catch (std::runtime_error& e)
+			{
+				std::cerr << e.what() << std::endl;
+				_terminate = thread_terminate = true;
+				break;
+			}
+			
 			
 			FrameDetections.push(roi);
 		}
@@ -347,7 +407,8 @@ hailo_vstream_info_t input_vstream_info[INPUT_COUNT];
 hailo_vstream_info_t output_vstream_info[OUTPUT_COUNT];
 std::vector<uint8_t> input_dummydata;
 
-char hailo_eth_name[100];
+std::string hailo_eth_name;
+std::string hailo_hef_set_forced;
 
 std::thread vstream_read_thread[OUTPUT_COUNT];
 std::thread yolo_output_collect_thread;
@@ -360,11 +421,15 @@ extern void Inference_input_request_cb();
 extern void Inferenced_Frame_cb(cv::Mat showframe, HailoROIPtr roi);
 
 
-void zaiv_set_eth_name(char *s)
+void zaiv_set_eth_name(std::string s)
 {
-	strcpy(hailo_eth_name, s);
+	hailo_eth_name = s;
 }
 
+void zaiv_set_hef_file(std::string s)
+{
+	hailo_hef_set_forced = s;
+}
 	
 void zaiv_input_frame_for_inference(cv::Mat *frame)
 {
@@ -399,8 +464,17 @@ int inference_runner()
 {
 	std::cout << "Starting inference_runner\n";
 
+    try
+    {
+		init_params = init(CONFIG_FILE, "yolov5");
+    }
+    catch (std::runtime_error& e)
+    {
+        std::cerr << e.what() << std::endl;
+		_terminate = true;
+        return 1;
+    }
 	
-	init_params = init(CONFIG_FILE, "yolov5");
 
 	
 	
@@ -411,7 +485,7 @@ int inference_runner()
 	std::cout << "scanning eth hailo ! - " << hailo_eth_name << "\n";
 	
 	status = hailo_scan_ethernet_devices(
-		hailo_eth_name,
+		hailo_eth_name.c_str(),
 		device_infos,
 		ACCELERATOR_SCAN_MAX_DEVICE_DEFAULT,
 		&num_of_devices,
@@ -458,11 +532,13 @@ int inference_runner()
 				}
 			}
 			
-			status = hailo_create_hef_file(&hef, ETH_HEF_FILE);
+			std::string hef_input = hailo_hef_set_forced == "" ? ETH_HEF_FILE : hailo_hef_set_forced;
+			
+			status = hailo_create_hef_file(&hef, hef_input.c_str());
 			// REQUIRE_SUCCESS(status, l_release_device, "Failed reading hef file");
 			if(status != HAILO_SUCCESS)
 			{
-				std::cout << "Failed reading hef file" << std::endl;
+				std::cout << "Failed reading hef file - " << hef_input << std::endl;
 				(void)hailo_release_device(device);
 				if(reset_hailo_some_attemps(&device)) continue;
 				else 
@@ -511,8 +587,10 @@ int inference_runner()
 		
 		status = hailo_create_pcie_device(NULL, &device);
 		REQUIRE_SUCCESS(status, l_exit, "Failed to create pcie_device");
+		
+		std::string hef_input = hailo_hef_set_forced == "" ? PCIE_HEF_FILE : hailo_hef_set_forced;
 
-		status = hailo_create_hef_file(&hef, PCIE_HEF_FILE);
+		status = hailo_create_hef_file(&hef, hef_input.c_str());
 		REQUIRE_SUCCESS(status, l_release_device, "Failed reading hef file");
 
 		status = hailo_init_configure_params(hef, HAILO_STREAM_INTERFACE_PCIE, &config_params);
@@ -540,7 +618,7 @@ int inference_runner()
 	std::cout << "input_vstreams_size : " << input_vstreams_size << std::endl;
 	std::cout << "output_vstreams_size : " << output_vstreams_size << std::endl;
 
-	REQUIRE_ACTION(((input_vstreams_size == INPUT_COUNT) || (output_vstreams_size == OUTPUT_COUNT)), status = HAILO_INVALID_OPERATION, l_release_hef, "Expected one input vstream and three outputs vstreams");
+	REQUIRE_ACTION(((input_vstreams_size == INPUT_COUNT) || (output_vstreams_size == OUTPUT_COUNT) || (output_vstreams_size == 1)), status = HAILO_INVALID_OPERATION, l_release_hef, "Expected one input vstream and three or one(NMS) outputs vstreams");
 
 	status = hailo_create_input_vstreams(network_group, input_vstream_params, input_vstreams_size, input_vstreams);
 	REQUIRE_SUCCESS(status, l_release_hef, "Failed creating input virtual streams");
@@ -550,6 +628,7 @@ int inference_runner()
 
 	status = hailo_activate_network_group(network_group, NULL, &activated_network_group);
 	REQUIRE_SUCCESS(status, l_release_output_vstream, "Failed activating network group");
+	
 	
 	
 	for (size_t i = 0; i < input_vstreams_size; i++)
@@ -577,14 +656,28 @@ int inference_runner()
 		status = hailo_get_output_vstream_info(output_vstreams[i], &output_vstream_info[i]);
 		REQUIRE_SUCCESS(status, l_deactivate_network_group, "Failed to get output vstream info");
 	}
+
 	
 	input_dummydata = std::vector<uint8_t>(input_vstream_frame_sizes[0]);
 	
-	for(int i=0;i<(int)output_vstreams_size;i++)
+	std::cout << "model input - " << hef_input_width << ", " << hef_input_height << std::endl;
+	
+
+	if(output_vstream_info[0].format.order == HAILO_FORMAT_ORDER_HAILO_NMS)
 	{
-		vstream_read_thread[i] = std::thread(vstream_read_thread_runner, i, output_vstreams[i], output_vstream_frame_sizes[i]);
+//		std::cout << "vstream name - " << output_vstream_info[0].name << std::endl;
+
+		vstream_read_thread[0] = std::thread(nms_vstream_read_thread_runner, output_vstreams[0], output_vstream_frame_sizes[0], output_vstream_info[0]);
 	}
-	yolo_output_collect_thread = std::thread(yolo_output_collecter_thread_runner, output_vstream_info);
+	else
+	{
+		for(int i=0;i<(int)output_vstreams_size;i++)
+		{
+			vstream_read_thread[i] = std::thread(vstream_read_thread_runner, i, output_vstreams[i], output_vstream_frame_sizes[i]);
+		}
+		yolo_output_collect_thread = std::thread(yolo_output_collecter_thread_runner, output_vstream_info);
+		
+	}
 	
 	std::cout << "Entering Main Loop\n";
 	while (true)
@@ -649,15 +742,13 @@ int inference_runner()
 	
 	thread_terminate = true;
 	
-	std::cout << "yolo_output_collect_thread waiting\n";
-	yolo_output_collect_thread.join();
 	
 	for(int i=0;i<10;i++)
 	{
 		usleep(1000 * 100); // 100 ms 
 		
 		bool all_dead = true;
-		for(int n=0;n<OUTPUT_COUNT;n++)
+		for(int n=0;n<output_vstreams_size;n++)
 		{
 			if(!thread_terminated[n])
 			{
@@ -669,14 +760,25 @@ int inference_runner()
 		if(all_dead) break;
 		
 		std::cout << "Write dummy buffer for Exiting\n";
-		hailo_vstream_write_raw_buffer(input_vstreams[0], input_dummydata.data(), input_vstream_frame_sizes[0]);	
+		hailo_vstream_write_raw_buffer(input_vstreams[0], input_dummydata.data(), input_vstream_frame_sizes[0]);
 	}
-	
-	
-	for(int i=0;i<(int)output_vstreams_size;i++)
+
+
+	if(output_vstream_info[0].format.order == HAILO_FORMAT_ORDER_HAILO_NMS)
 	{
-		std::cout << "vstream_read_thread " << i << " waiting\n";
-		vstream_read_thread[i].join();
+		std::cout << "vstream_read_thread " << 0 << " waiting\n";
+		vstream_read_thread[0].join();
+	}
+	else
+	{
+		std::cout << "yolo_output_collect_thread waiting\n";
+		yolo_output_collect_thread.join();
+		
+		for(int i=0;i<(int)output_vstreams_size;i++)
+		{
+			std::cout << "vstream_read_thread " << i << " waiting\n";
+			vstream_read_thread[i].join();
+		}
 	}
 	
 

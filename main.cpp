@@ -13,6 +13,20 @@
 #define INPUT_CAMERA_HEIGHT 			480
 #define INPUT_VIDEO_FILE 				"./resources/detection.mp4"
 
+
+#define NMS_HEF_FILE 					"./hef/yolov5_bdd.hef" // 6 labels
+
+static std::map<uint8_t, std::string> yolov5_bdd_labels = {
+    {0, "unlabeled"},
+    {1, "1"},
+    {2, "2"},
+    {3, "3"},
+    {4, "4"},
+    {5, "5"},
+    {6, "6"},
+};
+	
+
 cv::VideoCapture video;
 cv::Mat frame;
 
@@ -88,12 +102,17 @@ int main(int argc, char **argv)
 	
 	signal(SIGINT, intHandler);
 	
-	char eth_name[100];
+	std::string eth_name;
 	
 	// 이더넷 보드 대응 코드 (이더넷 인터페이스 이름 강제 지정 기능) , PCI 는 무관
-	if(argc == 2) strcpy(eth_name, argv[1]);
-	else strcpy(eth_name, ETH_HAILO_INTERFACE_NAME); 
+	if(argc == 2) eth_name = std::string(argv[1]);
+	else eth_name = ETH_HAILO_INTERFACE_NAME;
 	zaiv_set_eth_name(eth_name);
+
+	// 커스텀 HEF 파일 지정 기능 NMS HEF 사용가능
+	zaiv_set_hef_file(NMS_HEF_FILE);
+	// NMS HEF 파일의 라벨 지정
+	zaiv_set_hef_labels(yolov5_bdd_labels);
 	
 	if(!input_source_get(&video)) return 1;
 	
