@@ -13,8 +13,7 @@
 #define INPUT_CAMERA_HEIGHT 			480
 #define INPUT_VIDEO_FILE 				"./resources/detection.mp4"
 
-
-#define NMS_HEF_FILE 					"./hef/yolov5_bdd.hef" // 6 labels
+#define NMS_HEF_FILE                    "./hef/yolo5m_coco_10class.hef" // 6 labels
 
 static std::map<uint8_t, std::string> yolov5_bdd_labels = {
     {0, "unlabeled"},
@@ -24,8 +23,12 @@ static std::map<uint8_t, std::string> yolov5_bdd_labels = {
     {4, "4"},
     {5, "5"},
     {6, "6"},
+    {7, "7"},
+    {8, "8"},
+    {9, "9"},
+    {10, "10"},
 };
-	
+
 
 cv::VideoCapture video;
 cv::Mat frame;
@@ -39,11 +42,11 @@ bool input_source_get(cv::VideoCapture *v)
 	*v = cv::VideoCapture(INPUT_CAMERA_INDEX);
 	v->set(cv::CAP_PROP_FRAME_WIDTH, INPUT_CAMERA_WIDTH);
 	v->set(cv::CAP_PROP_FRAME_HEIGHT, INPUT_CAMERA_HEIGHT);
-	
+
 	if(!v->isOpened())
 	{
 		std::cout << "camera 0 is not vaild\n";
-		
+
 		*v = cv::VideoCapture(INPUT_VIDEO_FILE);
 		if(!v->isOpened())
 		{
@@ -51,7 +54,7 @@ bool input_source_get(cv::VideoCapture *v)
 			return false;
 		}
 	}
-	
+
 	return true;
 }
 
@@ -68,7 +71,7 @@ void Inference_input_request_cb()
 	else
 	{
 		video.release();
-		
+
 		if(!input_source_get(&video)) zaiv_terminate_inference_thread();
 	}
 }
@@ -99,49 +102,49 @@ void intHandler(int dummy)
 int main(int argc, char **argv)
 {
 	std::cout << argv[0] << " Started\n";
-	
+
 	signal(SIGINT, intHandler);
-	
+
 	std::string eth_name;
-	
+
 	// 이더넷 보드 대응 코드 (이더넷 인터페이스 이름 강제 지정 기능) , PCI 는 무관
 	if(argc == 2) eth_name = std::string(argv[1]);
 	else eth_name = ETH_HAILO_INTERFACE_NAME;
 	zaiv_set_eth_name(eth_name);
 
 	// // 커스텀 HEF 파일 지정 기능 NMS HEF 사용가능
-	// zaiv_set_hef_file(NMS_HEF_FILE);
+	zaiv_set_hef_file(NMS_HEF_FILE);
 	// // NMS HEF 파일의 라벨 지정
-	// zaiv_set_hef_labels(yolov5_bdd_labels);
-	
+	zaiv_set_hef_labels(yolov5_bdd_labels);
+
 	if(!input_source_get(&video)) return 1;
-	
+
 	// Hailo Main Thread 시작
 	zaiv_start_inference_thread();
-	
+
 	// cv::namedWindow("detection", cv::WND_PROP_FULLSCREEN);
-	
+
 	while(zaiv_inference_thread_alive())
 	{
-		
+
 		if(!InferencedFrames.empty())
 		{
 			std::pair<cv::Mat, HailoROIPtr> &frontElement = InferencedFrames.front();
-			
+
 			cv::Mat &showframe = frontElement.first;
 			HailoROIPtr roi = frontElement.second;
-			
+
 			/// ================================== 사용자 작성 코드 시작 ==================================
-			
+
 			zaiv_draw_all(&showframe, roi); // 현재 프레임에 Detection 데이터를 그려줌
-			
+
 			if(zaiv_timer_timeout_33ms()) // imshow 프레임 제한
 			{
 				cv::imshow("detection", showframe); // Detection 그려진 프레임 화면 표시
 				char c = cv::waitKey(1);
 				if(c == 'q') zaiv_terminate_inference_thread();
 			}
-			
+
 			/*
 			std::vector<HailoDetectionPtr> detections = hailo_common::get_hailo_detections(roi);
 
@@ -160,21 +163,21 @@ int main(int argc, char **argv)
 				std::cout << "height      : " << detection_bbox.height() << "\n";
 			}
 			*/
-			
+
 			/// ================================== 사용자 작성 코드 종료 ==================================
-			
+
 			InferencedFrames.pop();
 		}
-		
+
 		usleep(1000);
 	}
-	
+
 	// Hailo Main Thread 종료
 	zaiv_terminate_inference_thread();
-	
+
 	// Hailo Main Thread 종료 대기
 	zaiv_wait_for_inference_thread();
-	
+
 	std::cout << argv[0] << " Terminated\n";
 	return 0;
 }
